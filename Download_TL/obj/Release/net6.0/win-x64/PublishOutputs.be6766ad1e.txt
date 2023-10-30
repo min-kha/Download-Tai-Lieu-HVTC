@@ -1,0 +1,2 @@
+D:\KHA\CODE\ASP.NET\Download_TL\Download_TL\bin\Release\net6.0\publish\win-x64\Download_TL.pdb
+D:\KHA\CODE\ASP.NET\Download_TL\Download_TL\bin\Release\net6.0\publish\win-x64\Download_TL.exe
