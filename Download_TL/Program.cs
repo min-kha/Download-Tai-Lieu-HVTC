@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using iTextSharp.text;
 using iTextSharp.text.pdf;
 using System.Net;
+using System.Diagnostics;
 
 
 //var client = new HttpClient();
@@ -42,6 +43,7 @@ internal class Program
 {
     private static async Task Main(string[] args)
     {
+
         try
         {
 
@@ -85,21 +87,25 @@ internal class Program
 
 
             //==============================================
-            List<Task> tasks = new List<Task>();
-
-            Semaphore semaphore = new Semaphore(maxParallelDownloads, maxParallelDownloads);
+            List<Task> tasks = new();
+            List<int> failedDownloads = new();
+            Semaphore semaphore = new(maxParallelDownloads, maxParallelDownloads);
 
             for (int i = fromPage; i <= toPage; i++)
             {
                 semaphore.WaitOne();
 
-                Task task = DownloadImage(baseLink, destFolder, cookies, i);
+                Task task = DownloadImage(baseLink, destFolder, cookies, i, failedDownloads);
                 task.ContinueWith(t => semaphore.Release());
 
                 tasks.Add(task);
             }
             await Task.WhenAll(tasks);
             Console.WriteLine("\nDownloaded image\n");
+            for (int i = 0; i < 3 && failedDownloads.Any(); i++)
+            {
+                await TryDownload(destFolder, baseLink, cookies, failedDownloads);
+            }
 
             CompileToPDF(destFolder);
 
@@ -113,7 +119,7 @@ internal class Program
 
 
         //===========================================================================================
-        static async Task DownloadImage(string baseLink, string destFolder, string cookies, int nameOfImage)
+        static async Task DownloadImage(string baseLink, string destFolder, string cookies, int nameOfImage, List<int> failedDownloads)
         {
             try
             {
@@ -134,7 +140,7 @@ internal class Program
                 request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.61");
                 request.Headers.Add("sec-ch-ua", "\"Chromium\";v=\"118\", \"Microsoft Edge\";v=\"118\", \"Not=A?Brand\";v=\"99\"");
                 request.Headers.Add("sec-ch-ua-mobile", "?0");
-                request.Headers.Add("sec-ch-ua-platform", "\"Windows\""); 
+                request.Headers.Add("sec-ch-ua-platform", "\"Windows\"");
                 #endregion
                 var response = await client.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -151,12 +157,10 @@ internal class Program
 
                     byte[] imageBytes = Convert.FromBase64String(src.Split(',')[1]);
 
-                    using (var ms = new MemoryStream(imageBytes))
-                    {
-                        var returnImage = System.Drawing.Image.FromStream(ms);
-                        returnImage.Save($"{destFolder}/{nameOfImage:0000}.png", ImageFormat.Png);
-                        Console.WriteLine($"Downloaded: {destFolder}/{nameOfImage}.png"); // Print the 'src' attribute
-                    }
+                    using var ms = new MemoryStream(imageBytes);
+                    var returnImage = System.Drawing.Image.FromStream(ms);
+                    returnImage.Save($"{destFolder}/{nameOfImage:0000}.png".ToString(), ImageFormat.Png);
+                    Console.WriteLine($"Downloaded: {destFolder}\\{nameOfImage}.png"); // Print the 'src' attribute
                 }
                 else
                 {
@@ -165,17 +169,31 @@ internal class Program
             }
             catch (Exception e)
             {
+                failedDownloads.Add(nameOfImage);
                 Console.WriteLine(nameOfImage + " ----> Download image error: " + e.Message);
             }
+        }
+
+        static async Task TryDownload(string destFolder, string baseLink, string cookies, List<int> failedDownloads)
+        {
+            Console.WriteLine("\nTry downloading failded image...\n");
+            while(failedDownloads.Any())
+            {
+                int nameOfImage = failedDownloads.FirstOrDefault();
+                failedDownloads.Remove(nameOfImage);
+                await DownloadImage(baseLink, destFolder, cookies, nameOfImage, failedDownloads);
+            }
+            Console.WriteLine("Downloaded failded image\n");
         }
     }
 
     private static void CompileToPDF(string destFolder)
     {
+        string name = "Result.pdf";
         // Tạo tài liệu PDF với kích thước tương ứng
         Document doc = new();
 
-        PdfWriter.GetInstance(doc, new FileStream(destFolder + "/Result.pdf", FileMode.Create));
+        PdfWriter.GetInstance(doc, new FileStream(destFolder + "/" + name, FileMode.Create));
         doc.Open();
 
         // Duyệt qua các file ảnh trong thư mục
@@ -203,6 +221,8 @@ internal class Program
         // Đóng và lưu tài liệu PDF
         doc.Close();
         Console.WriteLine("\nCompile PDF success!");
+        var resultFile = @$"{destFolder}\{name}";
+        Console.WriteLine("\nCtrl + Click to open PDF:\n" + "file:///" + ConvertToForwardSlash(resultFile));
     }
 
     private static async Task GetSession((string, string) linkCookie)
@@ -264,6 +284,11 @@ internal class Program
 
         var gotoElement = doc.DocumentNode.SelectNodes("//a[contains(@href, '/goto/')]").FirstOrDefault();
         return (gotoElement.Attributes["href"].Value, "");
+    }
+
+    static string ConvertToForwardSlash(string path)
+    {
+        return path.Replace("\\", "/");
     }
 }
 
